@@ -47,7 +47,28 @@ export default {
     let cubes = [];
     let ws = null;
     let animId = null;
-    let targetPositions = [];
+    const ANIM_DURATION = 500;
+    const animStates = [
+      { startX: 0, startZ: 0, endX: 0, endZ: 0, startTime: 0 },
+      { startX: 0, startZ: 0, endX: 0, endZ: 0, startTime: 0 },
+      { startX: 0, startZ: 0, endX: 0, endZ: 0, startTime: 0 },
+    ];
+
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function startAnim(index, x, z) {
+      const now = performance.now();
+      const state = animStates[index];
+      const prevT = Math.min(1, (now - state.startTime) / ANIM_DURATION);
+      const easedPrevT = easeInOutCubic(prevT);
+      state.startX = state.startX + (state.endX - state.startX) * easedPrevT;
+      state.startZ = state.startZ + (state.endZ - state.startZ) * easedPrevT;
+      state.endX = x;
+      state.endZ = z;
+      state.startTime = now;
+    }
 
     function initThree() {
       scene = new THREE.Scene();
@@ -109,7 +130,6 @@ export default {
         cube.position.y = 0.75;
         scene.add(cube);
         cubes.push(cube);
-        targetPositions.push({ x: 0, z: 0 });
       }
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -128,9 +148,13 @@ export default {
 
     function animate() {
       animId = requestAnimationFrame(animate);
+      const now = performance.now();
       cubes.forEach((cube, i) => {
-        cube.position.x += (targetPositions[i].x - cube.position.x) * 0.15;
-        cube.position.z += (targetPositions[i].z - cube.position.z) * 0.15;
+        const state = animStates[i];
+        const t = Math.min(1, (now - state.startTime) / ANIM_DURATION);
+        const eased = easeInOutCubic(t);
+        cube.position.x = state.startX + (state.endX - state.startX) * eased;
+        cube.position.z = state.startZ + (state.endZ - state.startZ) * eased;
       });
       controls.update();
       renderer.render(scene, camera);
@@ -144,8 +168,7 @@ export default {
         const data = JSON.parse(event.data);
         data.forEach((item, i) => {
           forklifts.value[i] = { ...item };
-          targetPositions[i].x = item.x;
-          targetPositions[i].z = item.y;
+          startAnim(i, item.x, item.y);
         });
       };
 
