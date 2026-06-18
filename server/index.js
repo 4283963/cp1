@@ -19,8 +19,8 @@ function updatePositions() {
   FORKLIFTS.forEach((f) => {
     f.prevX = f.x;
     f.prevY = f.y;
-    f.x = Math.max(0, Math.min(WAREHOUSE_W, f.x + (Math.random() - 0.5) * 4));
-    f.y = Math.max(0, Math.min(WAREHOUSE_H, f.y + (Math.random() - 0.5) * 4));
+    f.x = Math.max(0, Math.min(WAREHOUSE_W, f.x + (Math.random() - 0.5) * 6));
+    f.y = Math.max(0, Math.min(WAREHOUSE_H, f.y + (Math.random() - 0.5) * 6));
   });
 }
 

@@ -6,17 +6,35 @@
     <div class="monitor-body">
       <div class="canvas-wrap" ref="canvasWrap">
         <canvas ref="canvasEl"></canvas>
+        <div class="alert-container">
+          <transition-group name="alert">
+            <div
+              v-for="alert in alerts"
+              :key="alert.id"
+              class="alert-box"
+            >
+              <div class="alert-icon">⚠️</div>
+              <div class="alert-content">
+                <div class="alert-title">超速警告</div>
+                <div class="alert-message">{{ alert.message }}</div>
+              </div>
+            </div>
+          </transition-group>
+        </div>
       </div>
       <div class="info-panel">
         <h2>叉车实时状态</h2>
         <ul class="forklift-list">
-          <li v-for="f in forklifts" :key="f.id" class="forklift-item">
-            <span class="forklift-id">{{ f.id }}</span>
+          <li v-for="f in forklifts" :key="f.id" class="forklift-item" :class="{ 'is-overspeed': f.isOverspeed }">
+            <span class="forklift-id">
+              {{ f.id }}
+              <span v-if="f.isOverspeed" class="overspeed-badge">超速</span>
+            </span>
             <span class="forklift-speed">
-              速度: <strong>{{ f.speed }}</strong> m/s
+              速度: <strong :class="{ 'danger': f.isOverspeed }">{{ f.speedKmh }}</strong> 码
             </span>
             <span class="forklift-pos">
-              ({{ f.x }}, {{ f.y }})
+              {{ f.zone }}区 · ({{ f.x }}, {{ f.y }})
             </span>
           </li>
         </ul>
@@ -38,10 +56,14 @@ export default {
     const canvasEl = ref(null);
     const canvasWrap = ref(null);
     const forklifts = ref([
-      { id: 'F-001', x: 0, y: 0, speed: 0 },
-      { id: 'F-002', x: 0, y: 0, speed: 0 },
-      { id: 'F-003', x: 0, y: 0, speed: 0 },
+      { id: 'F-001', x: 0, y: 0, speed: 0, speedKmh: 0, isOverspeed: false, zone: 'A' },
+      { id: 'F-002', x: 0, y: 0, speed: 0, speedKmh: 0, isOverspeed: false, zone: 'A' },
+      { id: 'F-003', x: 0, y: 0, speed: 0, speedKmh: 0, isOverspeed: false, zone: 'A' },
     ]);
+    const alerts = ref([]);
+
+    const SPEED_LIMIT = 15;
+    const ALERT_DURATION = 3000;
 
     let scene, camera, renderer, controls;
     let cubes = [];
@@ -56,6 +78,46 @@ export default {
 
     function easeInOutCubic(t) {
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function getZone(x, y) {
+      if (x > WAREHOUSE_W / 2) return 'B';
+      return 'A';
+    }
+
+    function triggerOverspeedAlert(forklift) {
+      const existing = alerts.value.find((a) => a.forkliftId === forklift.id);
+      if (existing) {
+        existing.speedKmh = forklift.speedKmh;
+        existing.message = `警告：${forklift.id}号叉车在库房${forklift.zone}区超速，当前时速${forklift.speedKmh}码！`;
+        existing.timestamp = Date.now();
+        return;
+      }
+      const alert = {
+        id: `${forklift.id}-${Date.now()}`,
+        forkliftId: forklift.id,
+        speedKmh: forklift.speedKmh,
+        message: `警告：${forklift.id}号叉车在库房${forklift.zone}区超速，当前时速${forklift.speedKmh}码！`,
+        timestamp: Date.now(),
+      };
+      alerts.value.push(alert);
+      setTimeout(() => {
+        const idx = alerts.value.findIndex((a) => a.id === alert.id);
+        if (idx >= 0) alerts.value.splice(idx, 1);
+      }, ALERT_DURATION);
+    }
+
+    function setForkliftOverspeed(index, isOver) {
+      const mat = cubes[index].material;
+      if (isOver) {
+        mat.color.setHex(0xffff00);
+        mat.emissive.setHex(0xffaa00);
+        mat.emissiveIntensity = 0.8;
+      } else {
+        mat.color.setHex(0xff2222);
+        mat.emissive.setHex(0x660000);
+        mat.emissiveIntensity = 1.0;
+      }
     }
 
     function startAnim(index, x, z) {
@@ -155,6 +217,11 @@ export default {
         const eased = easeInOutCubic(t);
         cube.position.x = state.startX + (state.endX - state.startX) * eased;
         cube.position.z = state.startZ + (state.endZ - state.startZ) * eased;
+
+        if (forklifts.value[i].isOverspeed) {
+          const flash = 0.5 + 0.5 * Math.sin(now * 0.012);
+          cube.material.emissiveIntensity = flash;
+        }
       });
       controls.update();
       renderer.render(scene, camera);
@@ -167,8 +234,26 @@ export default {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         data.forEach((item, i) => {
-          forklifts.value[i] = { ...item };
+          const speedKmh = Math.round(item.speed * 3.6 * 10) / 10;
+          const zone = getZone(item.x, item.y);
+          const isOverspeed = speedKmh > SPEED_LIMIT;
+          const wasOverspeed = forklifts.value[i].isOverspeed;
+
+          forklifts.value[i] = {
+            ...item,
+            speedKmh,
+            zone,
+            isOverspeed,
+          };
+
           startAnim(i, item.x, item.y);
+
+          if (isOverspeed) {
+            setForkliftOverspeed(i, true);
+            triggerOverspeedAlert(forklifts.value[i]);
+          } else if (wasOverspeed && !isOverspeed) {
+            setForkliftOverspeed(i, false);
+          }
         });
       };
 
@@ -197,7 +282,7 @@ export default {
       renderer?.dispose();
     });
 
-    return { canvasEl, canvasWrap, forklifts };
+    return { canvasEl, canvasWrap, forklifts, alerts };
   },
 };
 </script>
@@ -307,5 +392,116 @@ body {
   font-size: 12px;
   color: #666;
   font-family: 'Courier New', monospace;
+}
+
+.forklift-item.is-overspeed {
+  border-left-color: #ffff00;
+  background: #2a1a1a;
+  animation: pulse-border 0.8s infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-left-color: #ffff00; }
+  50% { border-left-color: #ff6600; }
+}
+
+.overspeed-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #1a1a2e;
+  background: #ffff00;
+  border-radius: 4px;
+  animation: badge-blink 0.6s infinite;
+}
+
+@keyframes badge-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.forklift-speed strong.danger {
+  color: #ffff00;
+}
+
+.alert-container {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.alert-box {
+  min-width: 340px;
+  background: linear-gradient(135deg, #cc0000 0%, #ff1a1a 100%);
+  color: #fff;
+  border: 2px solid #ffff00;
+  border-radius: 10px;
+  padding: 16px 20px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  box-shadow: 0 8px 24px rgba(255, 0, 0, 0.5),
+              0 0 0 1px rgba(255, 255, 0, 0.3) inset;
+  animation: alert-shake 0.5s ease-in-out;
+  pointer-events: auto;
+}
+
+.alert-icon {
+  font-size: 32px;
+  line-height: 1;
+  animation: icon-bounce 0.8s infinite;
+}
+
+@keyframes icon-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.alert-content {
+  flex: 1;
+}
+
+.alert-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffff00;
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+}
+
+.alert-message {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.alert-enter-active,
+.alert-leave-active {
+  transition: all 0.3s ease;
+}
+
+.alert-enter-from {
+  opacity: 0;
+  transform: translateX(40px) scale(0.9);
+}
+
+.alert-leave-to {
+  opacity: 0;
+  transform: translateX(40px) scale(0.9);
+}
+
+@keyframes alert-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
 }
 </style>
